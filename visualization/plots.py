@@ -2,7 +2,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 def plot_reconstruction(original_times: np.ndarray, original_data: np.ndarray, 
-                        reconstructed_data: np.ndarray, title: str = "Original vs Reconstructed Signal"):
+                        reconstructed_data: np.ndarray, title: str = "Original vs Reconstructed Signal",
+                        block: bool = True):
     """
     Plots the original signal against the lossy-reconstructed signal.
     This effectively visualizes the error introduced by compression.
@@ -17,11 +18,12 @@ def plot_reconstruction(original_times: np.ndarray, original_data: np.ndarray,
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    plt.show(block=block)
 
 def plot_transmitted_points(original_times: np.ndarray, original_data: np.ndarray, 
                             comp_times: np.ndarray, comp_values: np.ndarray, 
-                            title: str = "Points Transmitted vs Skipped"):
+                            title: str = "Points Transmitted vs Skipped",
+                            block: bool = True):
     """
     Plots the full original signal but specifically marks which points were actually 
     transmitted (kept by compression) versus which were skipped (dropped).
@@ -44,7 +46,7 @@ def plot_transmitted_points(original_times: np.ndarray, original_data: np.ndarra
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    plt.show(block=block)
 
 def plot_compression_ratio(categories: list[str], ratios: list[float], title: str = "Compression Ratio Comparison"):
     """
