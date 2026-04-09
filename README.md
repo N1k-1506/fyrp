@@ -67,3 +67,29 @@ If you wish to test the compression algorithms locally without any physical hard
 ```bash
 python main.py
 ```
+
+---
+
+## Example Expected Output
+
+Below is an example of what you will see in the terminal once the streaming concludes (or times out) and the compression metrics are aggressively evaluated:
+
+```text
+[RECEIVE] Raw Hardware Read -> Temp: 22.40 C
+[RECEIVE] Raw Hardware Read -> Temp: 22.51 C
+[TX TRIGGERED] Timestamp: 145 | Delta Payload: +0.2500 | Absolute Temp: 22.51 C
+...
+
+[TIMEOUT] 20-second inactivity limit triggered.
+Processing final payload metric sequence...
+
+--------------------------------------------------
+        STREAM COMPRESSION FINAL REPORT           
+--------------------------------------------------
+Total Stream Length      : 1000 points
+Packets actually sent    : 154 packets
+Bandwidth Data Reduction : 84.60%
+Reconstruction Loss RMSE : 0.8423
+--------------------------------------------------
+Opening Final Post-Stream Evaluation Static Graphs.
+```
