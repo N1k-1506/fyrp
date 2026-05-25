@@ -74,3 +74,39 @@ def plot_compression_ratio(categories: list[str], ratios: list[float], title: st
     
     plt.tight_layout()
     plt.show()
+
+def plot_evaluation_metrics(categories: list[str], rmses: list[float], energies: list[float], title: str = "Evaluation Metrics"):
+    """
+    Creates a side-by-side bar chart to compare RMSE and Estimated Energy.
+    """
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    colors1 = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+    colors2 = ['#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#1f77b4']
+    
+    # Subplot 1: RMSE
+    bars1 = ax1.bar(categories, rmses, color=colors1[:len(categories)])
+    for bar in bars1:
+        yval = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2.0, yval + (max(rmses) * 0.02), 
+                 f'{yval:.3f}', ha='center', va='bottom', fontweight='bold')
+    
+    ax1.set_ylabel('Root Mean Square Error (RMSE)')
+    ax1.set_title('Reconstruction Fidelity (Lower is Better)')
+    ax1.grid(axis='y', alpha=0.3, linestyle='--')
+    ax1.axhline(0, color='black', linewidth=1)
+    
+    # Subplot 2: Energy
+    bars2 = ax2.bar(categories, energies, color=colors2[:len(categories)])
+    for bar in bars2:
+        yval = bar.get_height()
+        ax2.text(bar.get_x() + bar.get_width()/2.0, yval + (max(energies) * 0.02), 
+                 f'{yval:.3f}J', ha='center', va='bottom', fontweight='bold')
+                 
+    ax2.set_ylabel('Estimated Energy (Joules)')
+    ax2.set_title('Transmission Energy Overhead (Lower is Better)')
+    ax2.grid(axis='y', alpha=0.3, linestyle='--')
+    ax2.axhline(0, color='black', linewidth=1)
+    
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.show()

@@ -1,0 +1,429 @@
+=========================================
+1. streaming.py
+=========================================
+
+import math
+from typing import Optional, Tuple, Any, List
+
+class StreamCompressor:
+    def __init__(self, window_size: int = 10, k: float = 2.0, min_epsilon: float = 0.05, debug: bool = False):
+        self.window_size = window_size
+        self.k = k
+        self.min_epsilon = min_epsilon
+        self.debug = debug
+        self.t = 0
+        self.last_value: Optional[float] = None
+        self.delta_queue: List[float] = []
+        self.queue_index = 0
+        self.t_pivot = 0
+        self.v_pivot = 0.0
+        self.max_slope = float('inf')
+        self.min_slope = float('-inf')
+        self.last_t = 0
+        self.last_abs_value = 0.0
+        self.last_transmitted_abs_value = 0.0
+        self.sdt_initialized = False
+
+    def process_data_point(self, value: float) -> Tuple[bool, Any]:
+        if self.last_value is None: 
+            self.last_value = value
+            self.t_pivot = self.t
+            self.v_pivot = value 
+            self.last_t = self.t
+            self.last_abs_value = value
+            self.last_transmitted_abs_value = value
+            self.sdt_initialized = True
+            self._update_threshold_queue(0.0)
+            output = (self.t, value)
+            self.t += 1
+            return True, output
+            
+        current_delta = value - self.last_value
+        self.last_value = value
+        self._update_threshold_queue(current_delta)
+        epsilon = self._calculate_epsilon()
+        should_transmit, payload = self._sdt_step(self.t, value, epsilon)
+        self.t += 1
+        return should_transmit, payload
+        
+    def _update_threshold_queue(self, delta: float) -> None:
+        if len(self.delta_queue) < self.window_size:
+            self.delta_queue.append(delta)
+        else:
+            self.delta_queue[self.queue_index] = delta
+            self.queue_index = (self.queue_index + 1) % self.window_size
+            
+    def _calculate_epsilon(self) -> float:
+        n = len(self.delta_queue)
+        if n < 2:
+            return self.min_epsilon
+        mean = sum(self.delta_queue) / n
+        variance = sum((x - mean) ** 2 for x in self.delta_queue) / (n - 1)
+        std_dev = math.sqrt(variance)
+        epsilon = self.k * std_dev
+        return max(epsilon, self.min_epsilon)
+        
+    def _sdt_step(self, t: int, current_abs_value: float, epsilon: float) -> Tuple[bool, Any]:
+        dt = t - self.t_pivot
+        if dt == 0:
+            return False, None
+        current_max_slope = (current_abs_value + epsilon - self.v_pivot) / dt
+        current_min_slope = (current_abs_value - epsilon - self.v_pivot) / dt
+        new_max_slope = min(self.max_slope, current_max_slope)
+        new_min_slope = max(self.min_slope, current_min_slope)
+        should_transmit = False
+        processed_value = None
+        
+        if new_max_slope < new_min_slope:
+            should_transmit = True
+            tx_delta = self.last_abs_value - self.last_transmitted_abs_value
+            processed_value = (self.last_t, tx_delta)
+            self.last_transmitted_abs_value = self.last_abs_value
+            self.t_pivot = self.last_t
+            self.v_pivot = self.last_abs_value
+            dt_new = t - self.t_pivot
+            if dt_new > 0:
+                self.max_slope = (current_abs_value + epsilon - self.v_pivot) / dt_new
+                self.min_slope = (current_abs_value - epsilon - self.v_pivot) / dt_new
+            else:
+                self.max_slope = float('inf')
+                self.min_slope = float('-inf')
+        else:
+            self.max_slope = new_max_slope
+            self.min_slope = new_min_slope
+            
+        self.last_t = t
+        self.last_abs_value = current_abs_value
+        
+        if not should_transmit and self.debug:
+            processed_value = {'time': t, 'abs': current_abs_value, 'epsilon': epsilon, 'status': 'skipped'}
+                 
+        return should_transmit, processed_value
+        
+    def flush(self) -> Tuple[bool, Any]:
+        tx_delta = self.last_abs_value - self.last_transmitted_abs_value
+        self.last_transmitted_abs_value = self.last_abs_value
+        return True, (self.last_t, tx_delta)
+
+
+=========================================
+2. reconstruction.py
+=========================================
+
+import numpy as np
+from algorithms.delta import decode
+
+def reconstruct_signal(
+    total_length: int, 
+    comp_times: np.ndarray, 
+    comp_tx_deltas: np.ndarray, 
+    method: str = 'linear'
+) -> np.ndarray:
+    if len(comp_times) == 0:
+        return np.zeros(total_length)
+        
+    full_times = np.arange(total_length)
+    absolute_anchors = decode(comp_tx_deltas)
+    
+    if method == 'linear':
+        reconstructed_signal = np.interp(full_times, comp_times, absolute_anchors)
+        return reconstructed_signal
+        
+    elif method == 'step':
+        reconstructed_signal = np.zeros(total_length)
+        current_idx = 0
+        
+        for i in range(len(comp_times)):
+            t = int(comp_times[i])
+            val = absolute_anchors[i]
+            
+            if i == 0:
+                reconstructed_signal[t] = val
+                current_idx = t + 1
+            else:
+                last_val = absolute_anchors[i-1]
+                reconstructed_signal[current_idx:t] = last_val
+                reconstructed_signal[t] = val
+                current_idx = t + 1
+                
+        if current_idx < total_length:
+            reconstructed_signal[current_idx:] = absolute_anchors[-1]
+            
+        return reconstructed_signal
+    else:
+        raise ValueError(f"Unknown reconstruction method: {method}")
+
+
+=========================================
+3. delta.py
+=========================================
+
+import numpy as np
+
+def encode(data: np.ndarray) -> np.ndarray:
+    if len(data) == 0:
+        return np.array([])
+    deltas = np.diff(data)
+    encoded_data = np.concatenate(([data[0]], deltas))
+    return encoded_data
+
+def decode(encoded_data: np.ndarray) -> np.ndarray:
+    if len(encoded_data) == 0:
+        return np.array([])
+    decoded_data = np.cumsum(encoded_data)
+    return decoded_data
+
+
+=========================================
+4. main.py
+=========================================
+
+import numpy as np
+from data.generator import generate_temperature_data
+from algorithms.streaming import StreamCompressor
+from algorithms.reconstruction import reconstruct_signal
+from metrics.evaluation import calculate_drr, calculate_rmse, estimate_transmission_energy
+from visualization.plots import plot_reconstruction, plot_transmitted_points, plot_compression_ratio, plot_evaluation_metrics
+
+def run_pipeline(original_data: np.ndarray, window_size: int = 10, k: float = 2.0):
+    times = np.arange(len(original_data))
+    compressor = StreamCompressor(window_size=window_size, k=k, debug=False)
+    
+    comp_times = []
+    comp_deltas = []
+    
+    for value in original_data:
+        should_transmit, payload = compressor.process_data_point(value)
+        
+        if should_transmit:
+            t, delta_val = payload
+            comp_times.append(t)
+            comp_deltas.append(delta_val)
+            
+    should_transmit, payload = compressor.flush()
+    if not comp_times or comp_times[-1] != payload[0]:
+        t, delta_val = payload
+        comp_times.append(t)
+        comp_deltas.append(delta_val)
+
+    comp_times_arr = np.array(comp_times)
+    comp_deltas_arr = np.array(comp_deltas)
+
+    reconstructed_signal = reconstruct_signal(
+        total_length=len(times),
+        comp_times=comp_times_arr,
+        comp_tx_deltas=comp_deltas_arr,
+        method='linear'
+    )
+    
+    return (comp_times_arr, comp_deltas_arr), reconstructed_signal
+
+if __name__ == "__main__":
+    original_data = generate_temperature_data(num_samples=1000, base_temp=22.0, amplitude=6.0, noise_std=0.4, cycles=3.0)
+    times = np.arange(len(original_data))
+    
+    test_k = 2.5
+    compressed, reconstructed = run_pipeline(original_data, k=test_k)
+    comp_times, comp_deltas = compressed
+    
+    drr = calculate_drr(len(original_data), len(comp_times))
+    rmse = calculate_rmse(original_data, reconstructed)
+
+
+=========================================
+5. flask_server.py
+=========================================
+
+import threading
+import time
+import sys
+import numpy as np
+from flask import Flask, request, jsonify
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+from algorithms.streaming import StreamCompressor
+from algorithms.reconstruction import reconstruct_signal
+from metrics.evaluation import calculate_drr, calculate_rmse, estimate_transmission_energy
+from visualization.plots import plot_reconstruction, plot_transmitted_points
+
+import logging
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
+
+app = Flask(__name__)
+
+data_lock = threading.Lock()
+MAX_POINTS = 100
+
+raw_times = []
+raw_values = []
+comp_times = []
+comp_values = []
+
+full_raw_times = []
+full_raw_values = []
+full_comp_times = []
+full_comp_values = []
+
+compressor = StreamCompressor(window_size=10, k=0.1, debug=False)
+system_tick = 0
+last_received_time = 0.0
+timeout_triggered = False
+
+@app.route('/data', methods=['POST'])
+def receive_data():
+    global system_tick, last_received_time
+    try:
+        data = request.get_json()
+        if not data or 'value' not in data:
+            return jsonify({"error": "No value provided in JSON payload"}), 400
+
+        current_temp = float(data['value'])
+        
+        with data_lock:
+            last_received_time = time.time()
+            current_tick = system_tick
+            system_tick += 1
+            
+            should_transmit, payload = compressor.process_data_point(current_temp)
+
+            raw_times.append(current_tick)
+            raw_values.append(current_temp)
+            full_raw_times.append(current_tick)
+            full_raw_values.append(current_temp)
+            
+            if len(raw_times) > MAX_POINTS:
+                raw_times.pop(0)
+                raw_values.pop(0)
+
+            if should_transmit:
+                t, delta_val = payload
+                comp_times.append(t)
+                comp_values.append(current_temp)
+                full_comp_times.append(t)
+                full_comp_values.append(current_temp)
+                full_comp_deltas.append(delta_val)
+                
+                while comp_times and comp_times[0] < raw_times[0]:
+                    comp_times.pop(0)
+                    comp_values.pop(0)
+
+                return jsonify({"status": "success", "transmitted": True, "timestamp": t, "delta": delta_val}), 200
+            else:
+                return jsonify({"status": "success", "transmitted": False}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+
+def monitor_timeout():
+    global timeout_triggered
+    while True:
+        time.sleep(1)
+        if last_received_time > 0 and (time.time() - last_received_time) > 20.0:
+            timeout_triggered = True
+            break
+
+full_comp_deltas = []
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+fig.suptitle('IoT Edge Compression Pipeline Monitor', fontsize=14)
+
+def animate(i):
+    global timeout_triggered
+    if timeout_triggered:
+        plt.close('all')
+        return
+
+    with data_lock:
+        if not raw_times:
+            return
+        x_raw = list(raw_times)
+        y_raw = list(raw_values)
+        x_comp = list(comp_times)
+        y_comp = list(comp_values)
+        
+    ax1.clear()
+    ax2.clear()
+
+    ax1.plot(x_raw, y_raw, color='blue', label='Raw Sensor Input')
+    ax1.set_title('Sensor Readings')
+    ax1.set_xlabel('System Ticks')
+    ax1.set_ylabel('Temperature (C°)')
+    ax1.grid(True)
+    ax1.legend(loc='upper right')
+
+    ax2.plot(x_raw, y_raw, color='lightgray', linestyle='--')
+    ax2.scatter(x_comp, y_comp, color='red', s=60, label='Transmitted TX Nodes', zorder=5)
+    
+    if len(x_comp) > 1:
+        ax2.plot(x_comp, y_comp, color='red', linewidth=1.5, zorder=4)
+
+    if len(x_raw) > 0 and len(x_comp) > 0:
+        drr = (1.0 - (len(x_comp) / len(x_raw))) * 100
+        ax2.set_title(f'Cloud Payload Mapping [DRR: {drr:.0f}%]')
+    else:
+        ax2.set_title('Cloud Payload Mapping')
+        
+    ax2.set_xlabel('System Ticks')
+    ax2.set_ylabel('Temperature (C°)')
+    ax2.grid(True)
+    ax2.legend(loc='upper right')
+
+def generate_final_metrics():
+    if len(full_raw_times) == 0:
+        return
+        
+    should_transmit, payload = compressor.flush()
+    if len(full_comp_times) == 0 or full_comp_times[-1] != payload[0]:
+        t, delta_val = payload
+        full_comp_times.append(t)
+        full_comp_values.append(full_raw_values[-1])
+        full_comp_deltas.append(delta_val)
+        
+    times_arr = np.array(full_raw_times)
+    original_data = np.array(full_raw_values)
+    comp_tx_deltas = np.array(full_comp_deltas)
+    comp_t_arr = np.array(full_comp_times)
+    
+    reconstructed_sig = reconstruct_signal(
+        total_length=len(times_arr),
+        comp_times=comp_t_arr,
+        comp_tx_deltas=comp_tx_deltas,
+        method='linear' 
+    )
+    
+    drr = calculate_drr(len(original_data), len(comp_t_arr))
+    rmse = calculate_rmse(original_data, reconstructed_sig)
+    energy = estimate_transmission_energy(len(comp_t_arr))
+    
+    plot_reconstruction(times_arr, original_data, reconstructed_sig, f"Final Original vs Reconstructed Signal (DRR={drr:.0f}%, RMSE={rmse:.2f})", block=False)
+    absolute_transmitted_values = reconstructed_sig[comp_t_arr]
+    plot_transmitted_points(times_arr, original_data, comp_t_arr, absolute_transmitted_values, 
+                            f"Final Active Stream Bandwidth Map", block=True)
+
+if __name__ == '__main__':
+    try:
+        server_thread = threading.Thread(target=run_flask)
+        server_thread.daemon = True
+        server_thread.start()
+        
+        monitor_thread = threading.Thread(target=monitor_timeout)
+        monitor_thread.daemon = True
+        monitor_thread.start()
+        
+        ani = animation.FuncAnimation(fig, animate, interval=500, cache_frame_data=False)
+        plt.tight_layout()
+        plt.show() 
+        
+        if timeout_triggered:
+            generate_final_metrics()
+            
+    except KeyboardInterrupt:
+        generate_final_metrics()
+        
+    finally:
+        sys.exit(0)

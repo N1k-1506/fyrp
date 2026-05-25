@@ -3,7 +3,7 @@ from data.generator import generate_temperature_data
 from algorithms.streaming import StreamCompressor
 from algorithms.reconstruction import reconstruct_signal
 from metrics.evaluation import calculate_drr, calculate_rmse, estimate_transmission_energy
-from visualization.plots import plot_reconstruction, plot_transmitted_points, plot_compression_ratio
+from visualization.plots import plot_reconstruction, plot_transmitted_points, plot_compression_ratio, plot_evaluation_metrics
 
 def run_pipeline(original_data: np.ndarray, window_size: int = 10, k: float = 2.0):
     """
@@ -84,14 +84,23 @@ if __name__ == "__main__":
     print("\nRunning sweep actively testing different multiplier thresholds...")
     k_sweeps = [1.0, 1.5, 2.5, 3.5, 5.0]
     ratios = []
+    rmses = []
+    energies = []
     labels = []
     
     for k_val in k_sweeps:
-        comp, _ = run_pipeline(original_data, k=k_val)
+        comp, reconstructed = run_pipeline(original_data, k=k_val)
         c_times, _ = comp
+        
         r = calculate_drr(len(original_data), len(c_times))
+        rmse = calculate_rmse(original_data, reconstructed)
+        energy = estimate_transmission_energy(len(c_times))
+        
         ratios.append(r)
+        rmses.append(rmse)
+        energies.append(energy)
         labels.append(f"k={k_val}")
         
-    plot_compression_ratio(labels, ratios, "Streaming Hardware Scaling Efficiency")
+    plot_compression_ratio(labels, ratios, "Streaming Hardware Scaling Efficiency (DRR)")
+    plot_evaluation_metrics(labels, rmses, energies, "Streaming Hardware Error & Energy Scaling")
     print("\nHardware architecture transition effectively validated and completed.")

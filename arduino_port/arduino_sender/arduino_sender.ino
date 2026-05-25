@@ -1,7 +1,12 @@
+#include <DHT.h>
+#include <DHT_U.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 
+#define DHTPIN 4
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
 // Network credentials configuration
 const char* ssid = "....";
 const char* password = "4\\3937bH";
@@ -30,22 +35,16 @@ void setup() {
   Serial.print("Local IP Address: ");
   Serial.println(WiFi.localIP());
 
-  // Initialize random seed state
-  randomSeed(analogRead(0));
+  // Initialize DHT sensor
+  dht.begin();
 }
 
-// Hardware mock interface mapping
+// Read temperature from DHT sensor
 float get_sensor_value() {
-  // Returns deterministic mathematical float simulating thermal boundaries [20.0, 30.0]
-  return 20.0 + (random(0, 1000) / 100.0);
-  
-  /* 
-    Reference implementation: Active Hardware integration mapping
-    float t = dht.readTemperature();
+  float t = dht.readTemperature();
 
-    if (isnan(t)) return 0.0;
-    return t;
-  */
+  if (isnan(t)) return 0.0;
+  return t;
 }
 
 void loop() {
@@ -59,13 +58,13 @@ void loop() {
       http.begin(client, serverUrl);
       http.addHeader("Content-Type", "application/json");
 
-      // Generate random simulated temperature
-      float simulatedTemp = get_sensor_value();
+      // Read actual temperature
+      float sensorTemp = get_sensor_value();
       
-      // Validation check: ensure analog read is bounded
-      if (!isnan(simulatedTemp) && simulatedTemp > 0.0) {
+      // Validation check: ensure read is bounded
+      if (!isnan(sensorTemp) && sensorTemp > 0.0) {
         // Construct standard application/json payload map
-        String jsonPayload = "{\"value\":" + String(simulatedTemp, 2) + "}";
+        String jsonPayload = "{\"value\":" + String(sensorTemp, 2) + "}";
         
         Serial.print("[HTTP TX] Sending Data: ");
         Serial.println(jsonPayload);

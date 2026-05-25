@@ -8,7 +8,7 @@ import matplotlib.animation as animation
 
 from algorithms.streaming import StreamCompressor
 from algorithms.reconstruction import reconstruct_signal
-from metrics.evaluation import calculate_drr, calculate_rmse
+from metrics.evaluation import calculate_drr, calculate_rmse, estimate_transmission_energy
 from visualization.plots import plot_reconstruction, plot_transmitted_points
 
 # Suppress Werkzeug default HTTP request logging
@@ -34,7 +34,7 @@ full_comp_times = []
 full_comp_values = []
 
 # Global compressor and system state trackers
-compressor = StreamCompressor(window_size=10, k=2.5, debug=False)
+compressor = StreamCompressor(window_size=10, k=0.1, debug=False)
 system_tick = 0
 last_received_time = 0.0
 timeout_triggered = False
@@ -178,6 +178,14 @@ def generate_final_metrics():
     print("        STREAM COMPRESSION FINAL REPORT           ")
     print("--------------------------------------------------")
     
+    # Ensure final trailing point is emitted to prevent flatline RMSE drift
+    should_transmit, payload = compressor.flush()
+    if len(full_comp_times) == 0 or full_comp_times[-1] != payload[0]:
+        t, delta_val = payload
+        full_comp_times.append(t)
+        full_comp_values.append(full_raw_values[-1]) # Sync with last received mapping
+        full_comp_deltas.append(delta_val)
+        
     times_arr = np.array(full_raw_times)
     original_data = np.array(full_raw_values)
     comp_tx_deltas = np.array(full_comp_deltas)
@@ -194,11 +202,13 @@ def generate_final_metrics():
     # Requirement: DRR and RMSE algorithm invocations
     drr = calculate_drr(len(original_data), len(comp_t_arr))
     rmse = calculate_rmse(original_data, reconstructed_sig)
+    energy = estimate_transmission_energy(len(comp_t_arr))
     
     print(f"Total Stream Length      : {len(original_data)} points")
     print(f"Packets actually sent    : {len(comp_t_arr)} packets")
     print(f"Bandwidth Data Reduction : {drr:.2f}%")
     print(f"Reconstruction Loss RMSE : {rmse:.4f}")
+    print(f"Estimated Energy Use     : {energy:.4f} J")
     print("--------------------------------------------------")
     
     print("Opening Final Post-Stream Evaluation Static Graphs.")
@@ -233,7 +243,8 @@ if __name__ == '__main__':
             generate_final_metrics()
             
     except KeyboardInterrupt:
-        pass  # Graciously handle exit without printing stack trace
+        print("\nKeyboard Interrupt detected. Generating final metrics...")
+        generate_final_metrics()
         
     finally:
         print("\nProcess termination commanded.")
